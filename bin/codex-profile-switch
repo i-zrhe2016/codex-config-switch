@@ -316,11 +316,9 @@ import_official() {
   mv "$tmp" "$auth"
   chmod 600 "$auth"
 
-  if [[ ! -f "$(profile_config official)" ]]; then
-    generate_official_config
-  fi
+  generate_official_config
 
-  info "Imported official profile."
+  info "Imported official profile with generated config.toml."
 }
 
 import_api() {
@@ -445,14 +443,18 @@ save_profile() {
   require_profile_name "$profile"
   ensure_dirs
 
-  [[ -f "$CONFIG_FILE" ]] || die "current config.toml does not exist"
   [[ -f "$AUTH_FILE" ]] || die "current auth.json does not exist"
-  validate_toml_file "$CONFIG_FILE" || die "current config.toml is invalid"
   validate_json_file "$AUTH_FILE" || die "current auth.json is invalid JSON"
 
   if [[ "$profile" == "api" ]]; then
+    [[ -f "$CONFIG_FILE" ]] || die "current config.toml does not exist"
+    validate_toml_file "$CONFIG_FILE" || die "current config.toml is invalid"
     validate_api_config_file "$CONFIG_FILE" || die "current config.toml does not look like an API profile"
     validate_api_auth_file "$AUTH_FILE" || die "current auth.json does not contain OPENAI_API_KEY"
+  fi
+
+  if [[ "$profile" == "official" && -f "$CONFIG_FILE" ]]; then
+    validate_toml_file "$CONFIG_FILE" || die "current config.toml is invalid"
   fi
 
   if [[ "$profile" == "official" && "$(auth_kind "$AUTH_FILE")" == "api_key" ]]; then
@@ -464,11 +466,19 @@ save_profile() {
   dir="$(profile_dir "$profile")"
   mkdir -p "$dir"
   chmod 700 "$dir"
-  cp "$CONFIG_FILE" "$(profile_config "$profile")"
+  if [[ "$profile" == "official" ]]; then
+    generate_official_config
+  else
+    cp "$CONFIG_FILE" "$(profile_config "$profile")"
+  fi
   cp "$AUTH_FILE" "$(profile_auth "$profile")"
   chmod 600 "$(profile_config "$profile")" "$(profile_auth "$profile")"
 
-  info "Saved current configuration as $profile profile."
+  if [[ "$profile" == "official" ]]; then
+    info "Saved current auth as official profile with generated config.toml."
+  else
+    info "Saved current configuration as api profile."
+  fi
 }
 
 show_list() {

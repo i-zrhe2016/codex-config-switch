@@ -53,7 +53,9 @@ Profile snapshots live under:
 ```
 
 `official` is for official ChatGPT/Plus auth state. Import this by pasting the
-official `auth.json` content when prompted.
+official `auth.json` content when prompted. Its `config.toml` is generated
+automatically from local preferences: third-party provider entries and
+`base_url` settings are removed, and `model_provider = "openai"` is written.
 
 `api` is for third-party OpenAI-compatible API configuration. Import this by
 pasting the third-party `config.toml` and `auth.json` content when prompted.
@@ -69,6 +71,11 @@ EOF
 Before switching, the script checks whether both `official` and `api` profile
 snapshots exist. If either profile is incomplete, it prompts for the missing
 content before applying the requested profile.
+
+For `save official` and `import official`, only the official `auth.json` is
+saved from user input or the current auth state. The official `config.toml` is
+auto-filled by the switcher so API endpoints are not copied into the official
+profile.
 
 Every `use official` or `use api` operation backs up the current `config.toml`
 and `auth.json` first:
