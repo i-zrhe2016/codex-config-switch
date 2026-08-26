@@ -1,0 +1,17 @@
+# Deny by default because Codex homes can contain credentials, logs, sessions,
+# caches, and large local databases.
+*
+
+!/.gitignore
+!/README.md
+
+!/bin/
+!/bin/codex-profile-switch
+
+!/skills/
+!/skills/codex-config-switch/
+!/skills/codex-config-switch/SKILL.md
+!/skills/codex-config-switch/agents/
+!/skills/codex-config-switch/agents/openai.yaml
+!/skills/codex-config-switch/scripts/
+!/skills/codex-config-switch/scripts/switch.sh
