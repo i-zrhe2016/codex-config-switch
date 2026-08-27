@@ -2,8 +2,7 @@
 set -euo pipefail
 umask 077
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_CODEX_HOME="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_CODEX_HOME="/root/.codex"
 CODEX_HOME="${CODEX_HOME:-$DEFAULT_CODEX_HOME}"
 
 CONFIG_FILE="$CODEX_HOME/config.toml"
