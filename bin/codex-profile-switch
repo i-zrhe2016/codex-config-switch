@@ -14,6 +14,7 @@ BACKUPS_DIR="$PROFILES_DIR/backups"
 usage() {
   cat <<'USAGE'
 Usage:
+  codex-profile-switch
   codex-profile-switch status
   codex-profile-switch list
   codex-profile-switch save official|api
@@ -25,6 +26,8 @@ Profiles:
   api       Third-party OpenAI-compatible API configuration.
 
 Notes:
+  - Run without arguments to choose an action interactively.
+  - The official profile contains auth.json only; no config.toml is used.
   - Sensitive values and API endpoints are never printed.
   - Multi-line pasted input ends with a line containing only: EOF
 USAGE
@@ -117,9 +120,9 @@ auth_kind() {
   jq -r '
     if type != "object" then
       "invalid"
-    elif has("OPENAI_API_KEY") then
+    elif (.OPENAI_API_KEY? | type == "string" and length > 0) then
       "api_key"
-    elif has("tokens") or has("access_token") or has("refresh_token") or has("id_token") then
+    elif .auth_mode? == "chatgpt" or has("tokens") or has("access_token") or has("refresh_token") or has("id_token") then
       "chatgpt_auth"
     else
       "unknown"
@@ -164,7 +167,9 @@ profile_status() {
   cfg="$(profile_config "$profile")"
   auth="$(profile_auth "$profile")"
 
-  [[ -f "$cfg" ]] || missing+=("config.toml")
+  if [[ "$profile" == "api" ]]; then
+    [[ -f "$cfg" ]] || missing+=("config.toml")
+  fi
   [[ -f "$auth" ]] || missing+=("auth.json")
 
   if (( ${#missing[@]} == 0 )); then
@@ -175,14 +180,12 @@ profile_status() {
 }
 
 detect_active_profile() {
-  local official_cfg official_auth api_cfg api_auth
-  official_cfg="$(profile_config official)"
+  local official_auth api_cfg api_auth
   official_auth="$(profile_auth official)"
   api_cfg="$(profile_config api)"
   api_auth="$(profile_auth api)"
 
-  if [[ -f "$CONFIG_FILE" && -f "$AUTH_FILE" && -f "$official_cfg" && -f "$official_auth" ]] &&
-     cmp -s "$CONFIG_FILE" "$official_cfg" &&
+  if [[ ! -f "$CONFIG_FILE" && -f "$AUTH_FILE" && -f "$official_auth" ]] &&
      cmp -s "$AUTH_FILE" "$official_auth"; then
     printf 'official'
   elif [[ -f "$CONFIG_FILE" && -f "$AUTH_FILE" && -f "$api_cfg" && -f "$api_auth" ]] &&
@@ -232,65 +235,6 @@ confirm_continue() {
   esac
 }
 
-generate_official_config() {
-  local dest
-  dest="$(profile_config official)"
-  mkdir -p "$(dirname "$dest")"
-
-  python3 - "$CONFIG_FILE" "$dest" <<'PY'
-import pathlib
-import re
-import sys
-
-src = pathlib.Path(sys.argv[1])
-dest = pathlib.Path(sys.argv[2])
-
-if src.exists():
-    lines = src.read_text(encoding="utf-8").splitlines(keepends=True)
-else:
-    lines = []
-
-out = []
-skip_provider_table = False
-
-provider_table = re.compile(r"^\s*\[\s*model_providers(?:\.|\])")
-table_header = re.compile(r"^\s*\[")
-top_model_provider = re.compile(r"^\s*model_provider\s*=")
-top_base_url = re.compile(r"^\s*base_url\s*=")
-
-for line in lines:
-    stripped = line.strip()
-
-    if provider_table.match(stripped):
-        skip_provider_table = True
-        continue
-
-    if skip_provider_table:
-        if table_header.match(stripped):
-            skip_provider_table = False
-        else:
-            continue
-
-    if top_model_provider.match(line) or top_base_url.match(line):
-        continue
-
-    out.append(line)
-
-body = "".join(out).lstrip()
-text = 'model_provider = "openai"\n'
-if body:
-    text += body
-
-dest.write_text(text, encoding="utf-8")
-PY
-
-  validate_toml_file "$dest" || {
-    rm -f "$dest"
-    die "generated official config is invalid"
-  }
-  chmod 600 "$dest"
-}
-
 import_official() {
   ensure_dirs
   local dir auth tmp
@@ -315,10 +259,9 @@ import_official() {
 
   mv "$tmp" "$auth"
   chmod 600 "$auth"
+  rm -f "$(profile_config official)"
 
-  generate_official_config
-
-  info "Imported official profile with generated config.toml."
+  info "Imported official profile (auth.json only)."
 }
 
 import_api() {
@@ -369,10 +312,7 @@ ensure_profile() {
         info "Official profile is missing auth.json."
         import_official
       fi
-      if [[ ! -f "$(profile_config official)" ]]; then
-        info "Official profile is missing config.toml; generating it from local preferences."
-        generate_official_config
-      fi
+      rm -f "$(profile_config official)"
       ;;
     api)
       if [[ ! -f "$(profile_config api)" || ! -f "$(profile_auth api)" ]]; then
@@ -416,20 +356,30 @@ apply_profile() {
   src_cfg="$(profile_config "$profile")"
   src_auth="$(profile_auth "$profile")"
 
-  [[ -f "$src_cfg" ]] || die "$profile profile is missing config.toml"
   [[ -f "$src_auth" ]] || die "$profile profile is missing auth.json"
 
-  validate_toml_file "$src_cfg" || die "$profile config.toml is invalid"
   validate_json_file "$src_auth" || die "$profile auth.json is invalid JSON"
+  if [[ "$profile" == "api" ]]; then
+    [[ -f "$src_cfg" ]] || die "api profile is missing config.toml"
+    validate_toml_file "$src_cfg" || die "api config.toml is invalid"
+    validate_api_config_file "$src_cfg" || die "api config.toml does not look like an API profile"
+    validate_api_auth_file "$src_auth" || die "api auth.json does not contain OPENAI_API_KEY"
+  fi
 
   backup_dir="$(backup_current)"
 
-  tmp_cfg="$(mktemp "$CODEX_HOME/.config.toml.XXXXXX")"
   tmp_auth="$(mktemp "$CODEX_HOME/.auth.json.XXXXXX")"
-  cp "$src_cfg" "$tmp_cfg"
   cp "$src_auth" "$tmp_auth"
-  chmod 600 "$tmp_cfg" "$tmp_auth"
-  mv "$tmp_cfg" "$CONFIG_FILE"
+  chmod 600 "$tmp_auth"
+
+  if [[ "$profile" == "api" ]]; then
+    tmp_cfg="$(mktemp "$CODEX_HOME/.config.toml.XXXXXX")"
+    cp "$src_cfg" "$tmp_cfg"
+    chmod 600 "$tmp_cfg"
+    mv "$tmp_cfg" "$CONFIG_FILE"
+  else
+    rm -f "$CONFIG_FILE"
+  fi
   mv "$tmp_auth" "$AUTH_FILE"
 
   info "Switched to $profile profile."
@@ -453,10 +403,6 @@ save_profile() {
     validate_api_auth_file "$AUTH_FILE" || die "current auth.json does not contain OPENAI_API_KEY"
   fi
 
-  if [[ "$profile" == "official" && -f "$CONFIG_FILE" ]]; then
-    validate_toml_file "$CONFIG_FILE" || die "current config.toml is invalid"
-  fi
-
   if [[ "$profile" == "official" && "$(auth_kind "$AUTH_FILE")" == "api_key" ]]; then
     if ! confirm_continue "Current auth looks like API-key auth. Save it as official anyway?"; then
       die "save official cancelled"
@@ -467,15 +413,18 @@ save_profile() {
   mkdir -p "$dir"
   chmod 700 "$dir"
   if [[ "$profile" == "official" ]]; then
-    generate_official_config
+    rm -f "$(profile_config "$profile")"
   else
     cp "$CONFIG_FILE" "$(profile_config "$profile")"
   fi
   cp "$AUTH_FILE" "$(profile_auth "$profile")"
-  chmod 600 "$(profile_config "$profile")" "$(profile_auth "$profile")"
+  chmod 600 "$(profile_auth "$profile")"
+  if [[ "$profile" == "api" ]]; then
+    chmod 600 "$(profile_config "$profile")"
+  fi
 
   if [[ "$profile" == "official" ]]; then
-    info "Saved current auth as official profile with generated config.toml."
+    info "Saved current auth as official profile (auth.json only)."
   else
     info "Saved current configuration as api profile."
   fi
@@ -495,6 +444,42 @@ show_status() {
   config_summary "$CONFIG_FILE"
   profile_status official
   profile_status api
+}
+
+interactive_main() {
+  local choice
+
+  if [[ ! -t 0 ]]; then
+    die "no command provided and standard input is not interactive"
+  fi
+
+  cat <<'MENU'
+Codex profile switcher
+  1) Switch to official ChatGPT login
+  2) Switch to third-party API
+  3) Show status
+  4) List saved profiles
+  5) Save current login as official
+  6) Save current configuration as API
+  7) Import official auth.json
+  8) Import API config.toml and auth.json
+  0) Exit
+MENU
+  printf 'Choose an action [0-8]: '
+  IFS= read -r choice
+
+  case "$choice" in
+    1) apply_profile official ;;
+    2) apply_profile api ;;
+    3) show_status ;;
+    4) show_list ;;
+    5) save_profile official ;;
+    6) save_profile api ;;
+    7) import_official ;;
+    8) import_api ;;
+    0) info "Cancelled." ;;
+    *) die "invalid choice: ${choice:-empty}" ;;
+  esac
 }
 
 main() {
@@ -521,8 +506,11 @@ main() {
     use)
       apply_profile "${2:-}"
       ;;
-    -h|--help|help|"")
+    -h|--help|help)
       usage
+      ;;
+    "")
+      interactive_main
       ;;
     *)
       usage >&2

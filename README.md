@@ -24,6 +24,7 @@ the skill wrapper instead of rewriting the switching logic.
 ## Commands
 
 ```bash
+/root/.codex/bin/codex-profile-switch
 /root/.codex/bin/codex-profile-switch status
 /root/.codex/bin/codex-profile-switch list
 /root/.codex/bin/codex-profile-switch save official
@@ -37,6 +38,10 @@ the skill wrapper instead of rewriting the switching logic.
 `status` and `list` are read-only. `save`, `import`, and `use` update local
 profile files under `/root/.codex/profiles`.
 
+Running the script without arguments opens an interactive menu for switching,
+inspecting, saving, or importing profiles. The explicit subcommands remain
+available for scripts and automation.
+
 ## Profiles
 
 Profile snapshots live under:
@@ -44,7 +49,6 @@ Profile snapshots live under:
 ```text
 /root/.codex/profiles/
   official/
-    config.toml
     auth.json
   api/
     config.toml
@@ -53,9 +57,9 @@ Profile snapshots live under:
 ```
 
 `official` is for official ChatGPT/Plus auth state. Import this by pasting the
-official `auth.json` content when prompted. Its `config.toml` is generated
-automatically from local preferences: third-party provider entries and
-`base_url` settings are removed, and `model_provider = "openai"` is written.
+official `auth.json` content when prompted. Official login does not use a saved
+`config.toml`. When switching to this profile, the current third-party
+`config.toml` is backed up and then removed so Codex uses its official defaults.
 
 `api` is for third-party OpenAI-compatible API configuration. Import this by
 pasting the third-party `config.toml` and `auth.json` content when prompted.
@@ -73,9 +77,7 @@ snapshots exist. If either profile is incomplete, it prompts for the missing
 content before applying the requested profile.
 
 For `save official` and `import official`, only the official `auth.json` is
-saved from user input or the current auth state. The official `config.toml` is
-auto-filled by the switcher so API endpoints are not copied into the official
-profile.
+saved from user input or the current auth state.
 
 Every `use official` or `use api` operation backs up the current `config.toml`
 and `auth.json` first:
@@ -106,7 +108,7 @@ At the time this README was created:
 ```text
 active_profile: api
 api profile: complete
-official profile: missing config.toml auth.json
+official profile: missing auth.json
 ```
 
 To finish official setup, run:

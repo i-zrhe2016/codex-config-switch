@@ -23,9 +23,10 @@ The wrapper delegates to:
 
 Supported commands:
 
+- no command: open an interactive action menu.
 - `status`: show active profile, auth type, and profile completeness.
 - `list`: show whether `official` and `api` profile snapshots exist.
-- `save official|api`: save the current auth/config as a profile snapshot. For `official`, `config.toml` is generated automatically.
+- `save official|api`: save the current auth/config as a profile snapshot. The official snapshot contains only `auth.json`.
 - `import official|api`: interactively import profile files.
 - `use official|api`: ensure both profile types exist, prompt for missing content, back up current files, then switch.
 
@@ -33,7 +34,7 @@ Supported commands:
 
 - Before switching, run `list` or `status` so the user can see whether both profile snapshots exist.
 - If a required snapshot is missing, use `use official|api` or `import official|api`; the script will prompt for the needed content.
-- Official profile input is the user's official `auth.json` content. The switcher auto-fills `config.toml` by removing third-party provider/base URL settings and setting `model_provider = "openai"`. Do not generate or infer official Plus credentials.
+- Official profile input is the user's official `auth.json` content. It has no `config.toml`; switching to it removes the active third-party `config.toml` after creating a backup. Do not generate or infer official Plus credentials.
 - API profile input is the user's third-party `config.toml` plus `auth.json` content.
 - Never print full API keys, tokens, or third-party API endpoints in the response. The script is designed to avoid exposing them; summarize only auth type and completeness.
 - Treat `profiles/backups/<timestamp>/` as rollback material. Do not delete backups unless the user explicitly asks.
