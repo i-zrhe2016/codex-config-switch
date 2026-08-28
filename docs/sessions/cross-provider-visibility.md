@@ -22,6 +22,18 @@
 
 `use api --resume-all` 的行为相同，只是最后运行会话时使用 API profile。
 
+## 与原生 resume 的区别
+
+`use <profile> --resume ...` 仍然原样调用 Codex 自带的 resume 流程；某些版本的原生 picker 会继续按当前 provider 过滤。`sessions` 和 `--resume-all` 是切换工具提供的显式全 provider 入口：先读取所有 provider 的会话 ID，再调用原生的 `codex resume <SESSION_ID>`。
+
+因此，切换到官方验证模式后想查看第三方 API 会话，应使用：
+
+```bash
+/root/.codex/bin/codex-profile-switch use official --resume-all
+```
+
+如果已经知道 ID，也可以直接使用 `--resume-all <SESSION_ID>`；只想查看而不打开会话时使用 `sessions`。
+
 ## 数据流
 
 ![跨 provider 会话可见性数据流](../diagrams/cross-provider-session-visibility.svg)
@@ -36,6 +48,7 @@
 - `--resume-all` 切换 profile 后才读取列表，随后用选中的会话 ID 调用 `codex resume`。
 - 历史会话能被发现，不代表第三方 provider 的上下文一定能被官方 provider 继续执行；能否继续由 Codex 的会话兼容性和目标 provider 决定。
 - 原有的 `use <profile> --resume ...` 仍然原样转发参数给原生 `codex resume`；需要跨 provider 发现时使用 `--resume-all`。
+- 如果切换已完成但列表 helper 启动失败，当前 profile 可能已经生效；先运行 `status` 确认，再按[排障文档](../troubleshooting/cross-provider-session-visibility.md)处理或切回另一个 profile。
 
 ## 组件职责
 
@@ -46,3 +59,7 @@
 | Codex app-server | 执行 `thread/list` 协议请求 |
 | state DB / rollouts | 保存原始会话及其 provider 元数据 |
 | `codex resume <SESSION_ID>` | 按 ID 打开选中的原始会话 |
+
+## 相关排障
+
+参见[跨 provider 会话可见性排障](../troubleshooting/cross-provider-session-visibility.md)。

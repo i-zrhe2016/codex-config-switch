@@ -74,5 +74,7 @@ selected profile.
 
 For the protocol boundary and limitations, read
 `docs/sessions/cross-provider-visibility.md` in the repository.
+For common failures and recovery, read
+`docs/troubleshooting/cross-provider-session-visibility.md`.
 
 If the command is interactive, keep the user informed that pasted multi-line input must end with a line containing only `EOF`.

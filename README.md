@@ -39,6 +39,11 @@ the skill wrapper instead of rewriting the switching logic.
 /root/.codex/bin/codex-profile-switch use official --resume-all
 ```
 
+## Documentation
+
+- [跨 provider 会话可见性](docs/sessions/cross-provider-visibility.md)：功能边界、数据流和命令用法。
+- [会话可见性排障](docs/troubleshooting/cross-provider-session-visibility.md)：常见错误、恢复方式和验证清单。
+
 `status`, `list`, and `sessions` are read-only. `save`, `import`, and `use` update local
 profile files under `/root/.codex/profiles`.
 
@@ -127,6 +132,10 @@ resume those sessions:
 /root/.codex/bin/codex-profile-switch use official --resume-all <SESSION_ID>
 ```
 
+The all-provider picker is deliberately a switcher command, not a modification
+of Codex's built-in `/resume` picker. This keeps the original provider metadata
+and makes the cross-provider behavior explicit.
+
 `--resume-all` uses the local app-server session index with an explicit
 all-provider filter, then passes the selected ID to `codex resume`. It keeps
 the original provider metadata and does not rewrite session JSONL/SQLite data;
@@ -135,7 +144,9 @@ session runs with the newly selected profile, so whether it can continue
 against that provider is still determined by Codex and the provider.
 
 The data flow and limitations are documented in
-[`docs/sessions/cross-provider-visibility.md`](docs/sessions/cross-provider-visibility.md).
+[`docs/sessions/cross-provider-visibility.md`](docs/sessions/cross-provider-visibility.md);
+troubleshooting steps are in
+[`docs/troubleshooting/cross-provider-session-visibility.md`](docs/troubleshooting/cross-provider-session-visibility.md).
 
 ## Privacy
 

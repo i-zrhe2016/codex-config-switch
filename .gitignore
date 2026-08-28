@@ -20,6 +20,8 @@
 !/docs/
 !/docs/sessions/
 !/docs/sessions/cross-provider-visibility.md
+!/docs/troubleshooting/
+!/docs/troubleshooting/cross-provider-session-visibility.md
 !/docs/diagrams/
 !/docs/diagrams/cross-provider-session-visibility.puml
 !/docs/diagrams/cross-provider-session-visibility.svg
