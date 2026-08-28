@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""List and select Codex sessions across all local model providers."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import select
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from typing import Any, NoReturn, TextIO
+
+
+DEFAULT_CODEX_HOME = "/root/.codex"
+READ_TIMEOUT_SECONDS = 30
+PAGE_SIZE = 200
+TITLE_LIMIT = 72
+
+
+class SessionListError(RuntimeError):
+    pass
+
+
+def fail(message: str) -> NoReturn:
+    raise SessionListError(message)
+
+
+class AppServer:
+    def __init__(self) -> None:
+        codex = shutil.which("codex")
+        if not codex:
+            fail("codex is required to list sessions")
+        try:
+            self.process = subprocess.Popen(
+                [codex, "app-server", "--stdio"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except OSError as exc:
+            fail(f"cannot start codex app-server: {exc}")
+        self.next_request_id = 1
+
+    def close(self) -> None:
+        process = self.process
+        try:
+            if process.stdin and not process.stdin.closed:
+                process.stdin.close()
+        except OSError:
+            pass
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    def send(self, method: str, params: dict[str, Any] | None = None) -> int:
+        request_id = self.next_request_id
+        self.next_request_id += 1
+        request: dict[str, Any] = {"id": request_id, "method": method}
+        if params is not None:
+            request["params"] = params
+        if not self.process.stdin:
+            fail("codex app-server stdin is unavailable")
+        try:
+            payload = (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")
+            self.process.stdin.write(payload)
+            self.process.stdin.flush()
+        except OSError as exc:
+            fail(f"cannot send app-server request: {exc}")
+        return request_id
+
+    def notify(self, method: str) -> None:
+        if not self.process.stdin:
+            fail("codex app-server stdin is unavailable")
+        try:
+            self.process.stdin.write(
+                (json.dumps({"method": method}) + "\n").encode("utf-8")
+            )
+            self.process.stdin.flush()
+        except OSError as exc:
+            fail(f"cannot send app-server notification: {exc}")
+
+    def wait_for(self, request_id: int) -> dict[str, Any]:
+        if not self.process.stdout:
+            fail("codex app-server stdout is unavailable")
+        stream = self.process.stdout
+        while True:
+            ready, _, _ = select.select([stream], [], [], READ_TIMEOUT_SECONDS)
+            if not ready:
+                fail("timed out waiting for codex app-server response")
+            line = stream.readline()
+            if not line:
+                fail("codex app-server closed before returning a response")
+            try:
+                message = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(message, dict) or message.get("id") != request_id:
+                continue
+            if "error" in message:
+                error = message.get("error")
+                if isinstance(error, dict):
+                    fail(
+                        "codex app-server request failed: "
+                        + str(error.get("message", "unknown error"))
+                    )
+                fail("codex app-server request failed")
+            result = message.get("result")
+            return result if isinstance(result, dict) else {}
+
+    def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.wait_for(self.send(method, params))
+
+
+def list_threads() -> list[dict[str, Any]]:
+    server = AppServer()
+    try:
+        server.request(
+            "initialize",
+            {
+                "clientInfo": {
+                    "name": "codex-profile-switch",
+                    "title": "Codex Profile Switch",
+                    "version": "0.1.0",
+                }
+            },
+        )
+        server.notify("initialized")
+
+        params: dict[str, Any] = {
+            "archived": False,
+            "limit": PAGE_SIZE,
+            "modelProviders": [],
+            "sortKey": "recency_at",
+            "sortDirection": "desc",
+            "useStateDbOnly": True,
+        }
+        threads: list[dict[str, Any]] = []
+        seen_cursors: set[str] = set()
+        while True:
+            result = server.request("thread/list", params)
+            page = result.get("data")
+            if not isinstance(page, list):
+                fail("codex app-server returned an invalid session list")
+            threads.extend(item for item in page if isinstance(item, dict))
+
+            cursor = result.get("nextCursor")
+            if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
+                break
+            seen_cursors.add(cursor)
+            params["cursor"] = cursor
+        return deduplicate_threads(threads)
+    finally:
+        server.close()
+
+
+def deduplicate_threads(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for thread in threads:
+        thread_id = thread.get("id")
+        if not isinstance(thread_id, str) or not thread_id or thread_id in seen_ids:
+            continue
+        seen_ids.add(thread_id)
+        result.append(thread)
+    return result
+
+
+def clean_text(value: Any, limit: int | None = None) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split())
+    text = "".join(char for char in text if char.isprintable())
+    if limit is not None and len(text) > limit:
+        return text[: max(0, limit - 1)] + "…"
+    return text
+
+
+def thread_title(thread: dict[str, Any]) -> str:
+    title = clean_text(thread.get("name"), TITLE_LIMIT)
+    if title:
+        return title
+    title = clean_text(thread.get("preview"), TITLE_LIMIT)
+    return title or "(untitled)"
+
+
+def thread_time(thread: dict[str, Any]) -> str:
+    for key in ("updatedAt", "recencyAt", "createdAt"):
+        value = thread.get(key)
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(value, tz=timezone.utc).astimezone().strftime(
+                    "%Y-%m-%d %H:%M"
+                )
+            except (OverflowError, OSError, ValueError):
+                pass
+    return "                 "
+
+
+def render_threads(threads: list[dict[str, Any]], stream: TextIO) -> None:
+    if not threads:
+        print("No local sessions found across model providers.", file=stream)
+        return
+
+    print(" #  UPDATED           PROVIDER           SESSION ID                            TITLE", file=stream)
+    print("-" * 124, file=stream)
+    for index, thread in enumerate(threads, start=1):
+        provider = clean_text(thread.get("modelProvider"), 18) or "?"
+        thread_id = clean_text(thread.get("id"), 36) or "?"
+        print(
+            f"{index:2d}  {thread_time(thread)}  {provider:<18} {thread_id:<36}  {thread_title(thread)}",
+            file=stream,
+        )
+
+
+def select_thread(threads: list[dict[str, Any]]) -> str:
+    if not sys.stdin.isatty():
+        fail("--resume-all needs an interactive terminal; pass a session ID or --last")
+    render_threads(threads, sys.stderr)
+    if not threads:
+        fail("no local sessions found across model providers")
+
+    while True:
+        print("Select a session number (or q to cancel): ", end="", file=sys.stderr, flush=True)
+        choice = sys.stdin.readline()
+        if not choice:
+            fail("session selection was cancelled")
+        choice = choice.strip()
+        if choice.lower() in {"q", "quit", "cancel"}:
+            fail("session selection was cancelled")
+        try:
+            index = int(choice)
+        except ValueError:
+            print("Please enter a session number.", file=sys.stderr)
+            continue
+        if 1 <= index <= len(threads):
+            thread_id = threads[index - 1].get("id")
+            if isinstance(thread_id, str) and thread_id:
+                print(thread_id)
+                return thread_id
+        print("That session number is out of range.", file=sys.stderr)
+
+    fail("session selection was cancelled")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="List Codex sessions across all local model providers."
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--select", action="store_true", help="print a picker and output the selected ID")
+    mode.add_argument("--last", action="store_true", help="output the newest session ID")
+    mode.add_argument("--id", metavar="SESSION_ID", help="verify and output a session ID")
+    parser.add_argument(
+        "--json", action="store_true", help="output the provider-neutral list as JSON"
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.json and (args.select or args.last or args.id):
+        print("Error: --json cannot be combined with --select, --last, or --id", file=sys.stderr)
+        return 2
+    try:
+        threads = list_threads()
+        if args.json:
+            print(json.dumps(threads, ensure_ascii=False, indent=2))
+        elif args.last:
+            if not threads:
+                fail("no local sessions found across model providers")
+            thread_id = threads[0].get("id")
+            if not isinstance(thread_id, str) or not thread_id:
+                fail("newest session has no usable ID")
+            print(thread_id)
+        elif args.id:
+            wanted = args.id.casefold()
+            for thread in threads:
+                thread_id = thread.get("id")
+                if isinstance(thread_id, str) and thread_id.casefold() == wanted:
+                    print(thread_id)
+                    break
+            else:
+                fail(f"session not found across model providers: {args.id}")
+        elif args.select:
+            select_thread(threads)
+        else:
+            render_threads(threads, sys.stdout)
+        return 0
+    except SessionListError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

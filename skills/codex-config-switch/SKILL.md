@@ -26,9 +26,11 @@ Supported commands:
 - no command: open an interactive action menu.
 - `status`: show active profile, auth type, and profile completeness.
 - `list`: show whether `official` and `api` profile snapshots exist.
+- `sessions`: list unarchived local sessions across all model providers.
 - `save official|api`: save the current auth/config as a profile snapshot. The official snapshot contains only `auth.json`.
 - `import official|api`: interactively import profile files.
 - `use official|api [--resume ...]`: ensure both profile types exist, prompt for missing content, back up current files, switch, and optionally run `codex resume` with the remaining arguments.
+- `use official|api --resume-all [--last|SESSION_ID]`: switch, select a session from all local providers, and resume it.
 
 ## Operating Rules
 
@@ -60,10 +62,17 @@ Supported commands:
 ```bash
 /root/.codex/skills/codex-config-switch/scripts/switch.sh use api --resume --last
 /root/.codex/skills/codex-config-switch/scripts/switch.sh use official --resume <SESSION_ID>
+/root/.codex/skills/codex-config-switch/scripts/switch.sh use official --resume-all
 ```
 
 Arguments after `--resume` are passed unchanged to `codex resume`. Omitting
-them opens the normal resume picker. Switching does not alter or merge local
-session history; the resumed session uses the newly selected profile.
+them opens the normal resume picker. `--resume-all` uses the provider-neutral
+local session index before invoking direct-ID resume, so sessions recorded by
+the other profile remain discoverable. It preserves provider metadata and does
+not alter or merge local session history; the resumed session uses the newly
+selected profile.
+
+For the protocol boundary and limitations, read
+`docs/sessions/cross-provider-visibility.md` in the repository.
 
 If the command is interactive, keep the user informed that pasted multi-line input must end with a line containing only `EOF`.

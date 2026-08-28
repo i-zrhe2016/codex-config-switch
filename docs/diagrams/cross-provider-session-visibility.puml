@@ -1,0 +1,30 @@
+@startuml
+!theme plain
+
+title Cross-provider session visibility
+
+actor User as user
+component "codex-profile-switch" as switcher
+component "codex-session-list" as indexer
+component "Codex app-server" as appserver
+database "Local session index\n(state DB + rollouts)" as state
+component "codex resume <ID>" as resume
+
+user --> switcher : use official --resume-all
+switcher --> switcher : apply selected auth/config
+switcher --> indexer : select or --last
+indexer --> appserver : thread/list\nmodelProviders: []
+appserver --> state : read all provider records
+state --> appserver : session metadata
+appserver --> indexer : paginated all-provider list
+indexer --> switcher : selected session ID
+switcher --> resume : direct-ID resume
+resume --> state : load original session
+
+note right of state
+  Provider metadata is preserved.
+  No JSONL/SQLite rewrite.
+  No message concatenation.
+end note
+
+@enduml

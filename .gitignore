@@ -7,6 +7,7 @@
 
 !/bin/
 !/bin/codex-profile-switch
+!/bin/codex-session-list
 
 !/skills/
 !/skills/codex-config-switch/
@@ -15,3 +16,10 @@
 !/skills/codex-config-switch/agents/openai.yaml
 !/skills/codex-config-switch/scripts/
 !/skills/codex-config-switch/scripts/switch.sh
+
+!/docs/
+!/docs/sessions/
+!/docs/sessions/cross-provider-visibility.md
+!/docs/diagrams/
+!/docs/diagrams/cross-provider-session-visibility.puml
+!/docs/diagrams/cross-provider-session-visibility.svg

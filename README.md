@@ -33,11 +33,13 @@ the skill wrapper instead of rewriting the switching logic.
 /root/.codex/bin/codex-profile-switch import api
 /root/.codex/bin/codex-profile-switch use official
 /root/.codex/bin/codex-profile-switch use api
+/root/.codex/bin/codex-profile-switch sessions
 /root/.codex/bin/codex-profile-switch use api --resume --last
 /root/.codex/bin/codex-profile-switch use official --resume <SESSION_ID> "继续处理"
+/root/.codex/bin/codex-profile-switch use official --resume-all
 ```
 
-`status` and `list` are read-only. `save`, `import`, and `use` update local
+`status`, `list`, and `sessions` are read-only. `save`, `import`, and `use` update local
 profile files under `/root/.codex/profiles`.
 
 Running the script without arguments opens an interactive menu for switching,
@@ -90,7 +92,7 @@ and `auth.json` first:
 
 Do not delete backup directories unless rollback material is no longer needed.
 
-### Switch and resume
+### Cross-provider session visibility
 
 `use <profile> --resume ...` combines profile switching with starting
 `codex resume`. The profile is applied first; every argument after `--resume`
@@ -107,12 +109,33 @@ is passed to `codex resume` unchanged.
 /root/.codex/bin/codex-profile-switch use api --resume
 ```
 
-This combines the two commands; it does not merge messages from different
-sessions. Switching only changes the active `config.toml` and `auth.json` and
-does not delete or copy the local session history under
-`/root/.codex/sessions`. The resumed session therefore runs with the newly
-selected profile. Whether a session can continue across different providers
-is determined by Codex and the provider, not by the switcher.
+The normal Codex picker can hide sessions recorded by another model provider
+after a profile switch. Use the all-provider path when the goal is to see or
+resume those sessions:
+
+```bash
+# List all unarchived local sessions and show their provider.
+/root/.codex/bin/codex-profile-switch sessions
+
+# Switch to official auth, then choose from every local provider.
+/root/.codex/bin/codex-profile-switch use official --resume-all
+
+# Resume the newest session across every local provider.
+/root/.codex/bin/codex-profile-switch use official --resume-all --last
+
+# Resume a known session ID after switching profiles.
+/root/.codex/bin/codex-profile-switch use official --resume-all <SESSION_ID>
+```
+
+`--resume-all` uses the local app-server session index with an explicit
+all-provider filter, then passes the selected ID to `codex resume`. It keeps
+the original provider metadata and does not rewrite session JSONL/SQLite data;
+it also does not concatenate messages from different sessions. The resumed
+session runs with the newly selected profile, so whether it can continue
+against that provider is still determined by Codex and the provider.
+
+The data flow and limitations are documented in
+[`docs/sessions/cross-provider-visibility.md`](docs/sessions/cross-provider-visibility.md).
 
 ## Privacy
 

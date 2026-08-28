@@ -4,6 +4,8 @@ umask 077
 
 DEFAULT_CODEX_HOME="/root/.codex"
 CODEX_HOME="${CODEX_HOME:-$DEFAULT_CODEX_HOME}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SESSION_LIST_SCRIPT="${CODEX_SESSION_LIST_SCRIPT:-$SCRIPT_DIR/codex-session-list}"
 
 CONFIG_FILE="$CODEX_HOME/config.toml"
 AUTH_FILE="$CODEX_HOME/auth.json"
@@ -19,6 +21,8 @@ Usage:
   codex-profile-switch save official|api
   codex-profile-switch import official|api
   codex-profile-switch use official|api [--resume [CODEX_RESUME_ARGS...]]
+  codex-profile-switch use official|api --resume-all [--last|SESSION_ID]
+  codex-profile-switch sessions
 
 Profiles:
   official  Official ChatGPT/Plus auth.json based configuration.
@@ -30,6 +34,7 @@ Notes:
   - Sensitive values and API endpoints are never printed.
   - Multi-line pasted input ends with a line containing only: EOF
   - With --resume, arguments after it are passed to: codex resume
+  - With --resume-all, sessions from every local model provider are listed.
 USAGE
 }
 
@@ -56,6 +61,11 @@ require_tools() {
 
 require_codex() {
   command -v codex >/dev/null 2>&1 || die "codex is required for --resume"
+}
+
+require_session_list() {
+  require_codex
+  [[ -x "$SESSION_LIST_SCRIPT" ]] || die "session list helper is not executable: $SESSION_LIST_SCRIPT"
 }
 
 profile_dir() {
@@ -439,6 +449,28 @@ use_profile() {
   require_profile_name "$profile"
   shift
 
+  if [[ "${1:-}" == "--resume-all" ]]; then
+    shift
+    [[ "$#" -le 1 ]] || die "--resume-all accepts --last or one session ID"
+    local selector="${1:-}"
+    if [[ "$selector" == -* && "$selector" != "--last" ]]; then
+      die "unexpected argument for --resume-all: $selector"
+    fi
+
+    require_session_list
+    apply_profile "$profile"
+    local session_id
+    if [[ "$selector" == "--last" ]]; then
+      session_id="$($SESSION_LIST_SCRIPT --last)"
+    elif [[ -n "$selector" ]]; then
+      session_id="$($SESSION_LIST_SCRIPT --id "$selector")"
+    else
+      session_id="$($SESSION_LIST_SCRIPT --select)"
+    fi
+    [[ -n "$session_id" ]] || die "no session was selected"
+    exec codex resume "$session_id"
+  fi
+
   if [[ "${1:-}" == "--resume" ]]; then
     shift
     require_codex
@@ -454,6 +486,11 @@ show_list() {
   ensure_dirs
   profile_status official
   profile_status api
+}
+
+show_sessions() {
+  require_session_list
+  "$SESSION_LIST_SCRIPT"
 }
 
 show_status() {
@@ -483,9 +520,10 @@ Codex profile switcher
   6) Save current configuration as API
   7) Import official auth.json
   8) Import API config.toml and auth.json
+  9) List all local sessions across providers
   0) Exit
 MENU
-  printf 'Choose an action [0-8]: '
+  printf 'Choose an action [0-9]: '
   IFS= read -r choice
 
   case "$choice" in
@@ -497,6 +535,7 @@ MENU
     6) save_profile api ;;
     7) import_official ;;
     8) import_api ;;
+    9) show_sessions ;;
     0) info "Cancelled." ;;
     *) die "invalid choice: ${choice:-empty}" ;;
   esac
@@ -512,6 +551,9 @@ main() {
       ;;
     list)
       show_list
+      ;;
+    sessions)
+      show_sessions
       ;;
     save)
       save_profile "${2:-}"
