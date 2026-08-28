@@ -44,6 +44,14 @@ the skill wrapper instead of rewriting the switching logic.
 - [跨 provider 会话可见性](docs/sessions/cross-provider-visibility.md)：功能边界、数据流和命令用法。
 - [会话可见性排障](docs/troubleshooting/cross-provider-session-visibility.md)：常见错误、恢复方式和验证清单。
 
+## Overall Architecture
+
+![跨 provider 会话可见性整体架构图](docs/diagrams/cross-provider-session-visibility.svg)
+
+Profile switching selects the active credentials, the session helper reads a
+provider-neutral local index, and the selected original session is resumed by
+ID.
+
 `status`, `list`, and `sessions` are read-only. `save`, `import`, and `use` update local
 profile files under `/root/.codex/profiles`.
 
