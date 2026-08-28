@@ -18,7 +18,7 @@ Usage:
   codex-profile-switch list
   codex-profile-switch save official|api
   codex-profile-switch import official|api
-  codex-profile-switch use official|api
+  codex-profile-switch use official|api [--resume [CODEX_RESUME_ARGS...]]
 
 Profiles:
   official  Official ChatGPT/Plus auth.json based configuration.
@@ -29,6 +29,7 @@ Notes:
   - The official profile contains auth.json only; no config.toml is used.
   - Sensitive values and API endpoints are never printed.
   - Multi-line pasted input ends with a line containing only: EOF
+  - With --resume, arguments after it are passed to: codex resume
 USAGE
 }
 
@@ -51,6 +52,10 @@ require_profile_name() {
 require_tools() {
   command -v jq >/dev/null 2>&1 || die "jq is required"
   command -v python3 >/dev/null 2>&1 || die "python3 is required"
+}
+
+require_codex() {
+  command -v codex >/dev/null 2>&1 || die "codex is required for --resume"
 }
 
 profile_dir() {
@@ -429,6 +434,22 @@ save_profile() {
   fi
 }
 
+use_profile() {
+  local profile="${1:-}"
+  require_profile_name "$profile"
+  shift
+
+  if [[ "${1:-}" == "--resume" ]]; then
+    shift
+    require_codex
+    apply_profile "$profile"
+    exec codex resume "$@"
+  fi
+
+  [[ "$#" -eq 0 ]] || die "unexpected argument for use: $1"
+  apply_profile "$profile"
+}
+
 show_list() {
   ensure_dirs
   profile_status official
@@ -503,7 +524,8 @@ main() {
       esac
       ;;
     use)
-      apply_profile "${2:-}"
+      shift
+      use_profile "$@"
       ;;
     -h|--help|help)
       usage

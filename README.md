@@ -33,6 +33,8 @@ the skill wrapper instead of rewriting the switching logic.
 /root/.codex/bin/codex-profile-switch import api
 /root/.codex/bin/codex-profile-switch use official
 /root/.codex/bin/codex-profile-switch use api
+/root/.codex/bin/codex-profile-switch use api --resume --last
+/root/.codex/bin/codex-profile-switch use official --resume <SESSION_ID> "继续处理"
 ```
 
 `status` and `list` are read-only. `save`, `import`, and `use` update local
@@ -87,6 +89,30 @@ and `auth.json` first:
 ```
 
 Do not delete backup directories unless rollback material is no longer needed.
+
+### Switch and resume
+
+`use <profile> --resume ...` combines profile switching with starting
+`codex resume`. The profile is applied first; every argument after `--resume`
+is passed to `codex resume` unchanged.
+
+```bash
+# Switch to the API profile, then resume the most recent session.
+/root/.codex/bin/codex-profile-switch use api --resume --last
+
+# Switch to the official profile, then resume a named or UUID session.
+/root/.codex/bin/codex-profile-switch use official --resume <SESSION_ID>
+
+# Omit resume arguments to open Codex's normal session picker.
+/root/.codex/bin/codex-profile-switch use api --resume
+```
+
+This combines the two commands; it does not merge messages from different
+sessions. Switching only changes the active `config.toml` and `auth.json` and
+does not delete or copy the local session history under
+`/root/.codex/sessions`. The resumed session therefore runs with the newly
+selected profile. Whether a session can continue across different providers
+is determined by Codex and the provider, not by the switcher.
 
 ## Privacy
 

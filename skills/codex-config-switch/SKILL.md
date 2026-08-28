@@ -28,7 +28,7 @@ Supported commands:
 - `list`: show whether `official` and `api` profile snapshots exist.
 - `save official|api`: save the current auth/config as a profile snapshot. The official snapshot contains only `auth.json`.
 - `import official|api`: interactively import profile files.
-- `use official|api`: ensure both profile types exist, prompt for missing content, back up current files, then switch.
+- `use official|api [--resume ...]`: ensure both profile types exist, prompt for missing content, back up current files, switch, and optionally run `codex resume` with the remaining arguments.
 
 ## Operating Rules
 
@@ -54,5 +54,16 @@ Supported commands:
 /root/.codex/skills/codex-config-switch/scripts/switch.sh status
 /root/.codex/skills/codex-config-switch/scripts/switch.sh use api
 ```
+
+- To switch and resume in one command:
+
+```bash
+/root/.codex/skills/codex-config-switch/scripts/switch.sh use api --resume --last
+/root/.codex/skills/codex-config-switch/scripts/switch.sh use official --resume <SESSION_ID>
+```
+
+Arguments after `--resume` are passed unchanged to `codex resume`. Omitting
+them opens the normal resume picker. Switching does not alter or merge local
+session history; the resumed session uses the newly selected profile.
 
 If the command is interactive, keep the user informed that pasted multi-line input must end with a line containing only `EOF`.
