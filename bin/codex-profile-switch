@@ -50,7 +50,8 @@ require_session_list() {
 
 require_session_sync() {
   require_codex
-  [[ -x "$SESSION_SYNC_SCRIPT" ]] || die "session sync helper is not executable: $SESSION_SYNC_SCRIPT"
+  command -v python3 >/dev/null 2>&1 || die "python3 is required to synchronize sessions"
+  [[ -f "$SESSION_SYNC_SCRIPT" ]] || die "session sync helper not found: $SESSION_SYNC_SCRIPT"
 }
 
 active_profile() {
@@ -124,7 +125,7 @@ apply_profile() {
 
 sync_sessions() {
   require_session_sync
-  "$SESSION_SYNC_SCRIPT"
+  python3 "$SESSION_SYNC_SCRIPT"
 }
 
 sync_after_switch() {
