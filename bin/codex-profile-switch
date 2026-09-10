@@ -5,6 +5,7 @@ umask 077
 CODEX_HOME="${CODEX_HOME:-/root/.codex}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_LIST_SCRIPT="${CODEX_SESSION_LIST_SCRIPT:-$SCRIPT_DIR/codex-session-list}"
+SESSION_SYNC_SCRIPT="${CODEX_SESSION_SYNC_SCRIPT:-$SCRIPT_DIR/codex-session-sync}"
 CONFIG_FILE="$CODEX_HOME/config.toml"
 API_CONFIG="$CODEX_HOME/profiles/api/config.toml"
 BACKUPS_DIR="$CODEX_HOME/profiles/backups"
@@ -13,18 +14,21 @@ usage() {
   cat <<'USAGE'
 Usage:
   codex-profile-switch
-  codex-profile-switch status|list|sessions
+  codex-profile-switch status|list|sessions|sync-sessions
   codex-profile-switch save api
   codex-profile-switch import api CONFIG_FILE
-  codex-profile-switch use official|api [--resume [CODEX_RESUME_ARGS...]]
-  codex-profile-switch use official|api --resume-all [--last|SESSION_ID]
+  codex-profile-switch use official|api [--no-sync-sessions]
+  codex-profile-switch use official|api [--no-sync-sessions] --resume [CODEX_RESUME_ARGS...]
+  codex-profile-switch use official|api [--no-sync-sessions] --resume-all [--last|SESSION_ID]
 
+Switching profiles synchronizes inactive historical sessions to the newly active provider by default.
 API keys are supplied through exported environment variables, not auth.json.
 USAGE
 }
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
+warn() { printf 'Warning: %s\n' "$*" >&2; }
 
 ensure_dirs() {
   mkdir -p "$(dirname "$API_CONFIG")" "$BACKUPS_DIR"
@@ -36,12 +40,18 @@ require_profile() {
 }
 
 require_codex() {
-  command -v codex >/dev/null 2>&1 || die "codex is required for --resume"
+  command -v codex >/dev/null 2>&1 || die "codex is required"
 }
 
 require_session_list() {
   require_codex
   [[ -x "$SESSION_LIST_SCRIPT" ]] || die "session list helper is not executable: $SESSION_LIST_SCRIPT"
+}
+
+require_session_sync() {
+  require_codex
+  command -v python3 >/dev/null 2>&1 || die "python3 is required to synchronize sessions"
+  [[ -f "$SESSION_SYNC_SCRIPT" ]] || die "session sync helper not found: $SESSION_SYNC_SCRIPT"
 }
 
 active_profile() {
@@ -113,6 +123,17 @@ apply_profile() {
   [[ -z "$backup" ]] || info "Backup: $backup"
 }
 
+sync_sessions() {
+  require_session_sync
+  python3 "$SESSION_SYNC_SCRIPT"
+}
+
+sync_after_switch() {
+  if ! sync_sessions; then
+    warn "profile switched, but one or more historical sessions could not be synchronized"
+  fi
+}
+
 resume_all() {
   local selector="${1:-}" session_id
   [[ "$#" -le 1 ]] || die "--resume-all accepts --last or one session ID"
@@ -131,24 +152,34 @@ resume_all() {
 }
 
 use_profile() {
-  local profile="${1:-}"
+  local profile="${1:-}" sync=true
   require_profile "$profile"
   shift
+
+  if [[ "${1:-}" == --no-sync-sessions ]]; then
+    sync=false
+    shift
+  fi
 
   case "${1:-}" in
     --resume)
       shift
       require_codex
       apply_profile "$profile"
+      [[ "$sync" == false ]] || sync_after_switch
       exec codex resume "$@"
       ;;
     --resume-all)
       shift
       require_session_list
       apply_profile "$profile"
+      [[ "$sync" == false ]] || sync_after_switch
       resume_all "$@"
       ;;
-    "") apply_profile "$profile" ;;
+    "")
+      apply_profile "$profile"
+      [[ "$sync" == false ]] || sync_after_switch
+      ;;
     *) die "unexpected argument: $1" ;;
   esac
 }
@@ -157,23 +188,25 @@ interactive_main() {
   local choice path
   cat <<'MENU'
 Codex config switcher
-  1) Use official login
-  2) Use API config
+  1) Use official login + sync sessions
+  2) Use API config + sync sessions
   3) Status
   4) Save current config as API
   5) Import API config
   6) List sessions
+  7) Sync sessions to current provider
   0) Exit
 MENU
-  printf 'Choose [0-6]: '
+  printf 'Choose [0-7]: '
   IFS= read -r choice
   case "$choice" in
-    1) apply_profile official ;;
-    2) apply_profile api ;;
+    1) use_profile official ;;
+    2) use_profile api ;;
     3) show_status ;;
     4) save_api ;;
     5) printf 'config.toml path: '; IFS= read -r path; import_api "$path" ;;
     6) require_session_list; "$SESSION_LIST_SCRIPT" ;;
+    7) sync_sessions ;;
     0) : ;;
     *) die "invalid choice" ;;
   esac
@@ -185,6 +218,7 @@ main() {
     status) show_status ;;
     list) show_list ;;
     sessions) require_session_list; "$SESSION_LIST_SCRIPT" ;;
+    sync-sessions) sync_sessions ;;
     save) [[ "${2:-}" == api ]] || die "only API config.toml is saved"; save_api ;;
     import) [[ "${2:-}" == api ]] || die "only API config.toml is imported"; import_api "${3:-}" ;;
     use) shift; use_profile "$@" ;;
