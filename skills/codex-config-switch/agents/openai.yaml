@@ -1,6 +1,6 @@
 interface:
   display_name: "Codex Config Switch"
-  short_description: "Switch Codex official and API profiles"
-  default_prompt: "Use $codex-config-switch to switch Codex between official and API configuration profiles."
+  short_description: "Import and switch Codex config.toml profiles"
+  default_prompt: "Use $codex-config-switch to import a Codex config.toml, activate API mode, switch providers, or return to official Codex login."
 policy:
   allow_implicit_invocation: true
