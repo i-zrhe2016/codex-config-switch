@@ -6,311 +6,126 @@ CODEX_HOME="${CODEX_HOME:-/root/.codex}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_LIST_SCRIPT="${CODEX_SESSION_LIST_SCRIPT:-$SCRIPT_DIR/codex-session-list}"
 CONFIG_FILE="$CODEX_HOME/config.toml"
-AUTH_FILE="$CODEX_HOME/auth.json"
-PROFILES_DIR="$CODEX_HOME/profiles"
-BACKUPS_DIR="$PROFILES_DIR/backups"
+API_CONFIG="$CODEX_HOME/profiles/api/config.toml"
+BACKUPS_DIR="$CODEX_HOME/profiles/backups"
 
 usage() {
   cat <<'USAGE'
 Usage:
   codex-profile-switch
   codex-profile-switch status|list|sessions
-  codex-profile-switch save official|api
-  codex-profile-switch import official|api
+  codex-profile-switch save api
+  codex-profile-switch import api CONFIG_FILE
   codex-profile-switch use official|api [--resume [CODEX_RESUME_ARGS...]]
   codex-profile-switch use official|api --resume-all [--last|SESSION_ID]
+
+API keys are supplied through exported environment variables, not auth.json.
 USAGE
 }
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
 
-require_profile() {
-  [[ "${1:-}" == "official" || "${1:-}" == "api" ]] || die "profile must be 'official' or 'api'"
+ensure_dirs() {
+  mkdir -p "$(dirname "$API_CONFIG")" "$BACKUPS_DIR"
+  chmod 700 "$CODEX_HOME/profiles" "$(dirname "$API_CONFIG")" "$BACKUPS_DIR"
 }
 
-require_python() { command -v python3 >/dev/null 2>&1 || die "python3 is required"; }
-require_codex() { command -v codex >/dev/null 2>&1 || die "codex is required for --resume"; }
+require_profile() {
+  [[ "${1:-}" == official || "${1:-}" == api ]] || die "profile must be 'official' or 'api'"
+}
+
+require_codex() {
+  command -v codex >/dev/null 2>&1 || die "codex is required for --resume"
+}
 
 require_session_list() {
   require_codex
   [[ -x "$SESSION_LIST_SCRIPT" ]] || die "session list helper is not executable: $SESSION_LIST_SCRIPT"
 }
 
-profile_file() { printf '%s/%s/%s\n' "$PROFILES_DIR" "$1" "$2"; }
-
-ensure_dirs() {
-  mkdir -p "$PROFILES_DIR" "$BACKUPS_DIR"
-  chmod 700 "$PROFILES_DIR" "$BACKUPS_DIR"
-}
-
-inspect_file() {
-  python3 - "$@" <<'PY'
-import json
-import sys
-import tomllib
-
-mode, path = sys.argv[1:3]
-
-if mode in {"json", "api-auth", "auth-kind"}:
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        if mode == "auth-kind":
-            print("invalid")
-            raise SystemExit(0)
-        raise SystemExit(1)
-
-    if not isinstance(data, dict):
-        if mode == "auth-kind":
-            print("invalid")
-            raise SystemExit(0)
-        raise SystemExit(1)
-
-    if mode == "api-auth":
-        key = data.get("OPENAI_API_KEY")
-        raise SystemExit(0 if isinstance(key, str) and key else 1)
-
-    if mode == "auth-kind":
-        key = data.get("OPENAI_API_KEY")
-        if isinstance(key, str) and key:
-            print("api_key")
-        elif data.get("auth_mode") == "chatgpt" or any(
-            key in data for key in ("tokens", "access_token", "refresh_token", "id_token")
-        ):
-            print("chatgpt_auth")
-        else:
-            print("unknown")
-        raise SystemExit(0)
-
-    raise SystemExit(0)
-
-try:
-    with open(path, "rb") as f:
-        data = tomllib.load(f)
-except Exception:
-    if mode == "summary":
-        print("config: invalid")
-        raise SystemExit(0)
-    raise SystemExit(1)
-
-if mode == "api-config":
-    providers = data.get("model_providers", {})
-    ok = isinstance(providers, dict) and any(
-        isinstance(provider, dict) and str(provider.get("base_url", "")).strip()
-        for provider in providers.values()
-    )
-    raise SystemExit(0 if ok else 1)
-
-if mode == "toml":
-    raise SystemExit(0)
-
-if mode == "summary":
-    providers = data.get("model_providers", {})
-    custom = isinstance(providers, dict) and any(
-        isinstance(provider, dict) and str(provider.get("base_url", "")).strip()
-        for provider in providers.values()
-    )
-    print(
-        f"config: provider={data.get('model_provider', 'default')} "
-        f"model={data.get('model', 'default')} custom_endpoint={'yes' if custom else 'no'}"
-    )
-    raise SystemExit(0)
-
-raise SystemExit(2)
-PY
-}
-
-auth_kind() {
-  [[ -f "$1" ]] || { printf 'missing'; return; }
-  inspect_file auth-kind "$1"
-}
-
-validate_profile_files() {
-  local profile="$1" cfg="$2" auth="$3"
-  [[ -f "$auth" ]] || die "$profile profile is missing auth.json"
-  inspect_file json "$auth" || die "$profile auth.json is invalid JSON"
-
-  if [[ "$profile" == "api" ]]; then
-    [[ -f "$cfg" ]] || die "api profile is missing config.toml"
-    inspect_file toml "$cfg" || die "api config.toml is invalid TOML"
-    inspect_file api-config "$cfg" || die "api config.toml must contain a custom provider base_url"
-    inspect_file api-auth "$auth" || die "api auth.json must contain OPENAI_API_KEY"
-  fi
-}
-
-profile_status() {
-  local profile="$1" cfg auth missing=()
-  cfg="$(profile_file "$profile" config.toml)"
-  auth="$(profile_file "$profile" auth.json)"
-  [[ "$profile" != "api" || -f "$cfg" ]] || missing+=(config.toml)
-  [[ -f "$auth" ]] || missing+=(auth.json)
-
-  if ((${#missing[@]})); then
-    printf '%s: missing %s\n' "$profile" "${missing[*]}"
-  else
-    printf '%s: complete auth=%s\n' "$profile" "$(auth_kind "$auth")"
-  fi
-}
-
-detect_active_profile() {
-  local official_auth api_cfg api_auth
-  official_auth="$(profile_file official auth.json)"
-  api_cfg="$(profile_file api config.toml)"
-  api_auth="$(profile_file api auth.json)"
-
-  if [[ ! -f "$CONFIG_FILE" && -f "$AUTH_FILE" && -f "$official_auth" ]] && cmp -s "$AUTH_FILE" "$official_auth"; then
+active_profile() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
     printf 'official'
-  elif [[ -f "$CONFIG_FILE" && -f "$AUTH_FILE" && -f "$api_cfg" && -f "$api_auth" ]] && \
-       cmp -s "$CONFIG_FILE" "$api_cfg" && cmp -s "$AUTH_FILE" "$api_auth"; then
+  elif [[ -f "$API_CONFIG" ]] && cmp -s "$CONFIG_FILE" "$API_CONFIG"; then
     printf 'api'
   else
     printf 'custom'
   fi
 }
 
-read_multiline() {
-  local label="$1" dest="$2" line
-  : >"$dest"
-  printf '%s\nPaste content below. Finish with a line containing only EOF.\n' "$label"
-  while IFS= read -r line; do
-    [[ "$line" == "EOF" ]] && break
-    printf '%s\n' "$line" >>"$dest"
-  done
-  [[ -s "$dest" ]] || die "no content was provided"
-  chmod 600 "$dest"
+show_list() {
+  printf 'official: built-in (auth untouched)\n'
+  [[ -f "$API_CONFIG" ]] && printf 'api: complete\n' || printf 'api: missing config.toml\n'
 }
 
-confirm() {
-  local answer
-  [[ -t 0 ]] || return 1
-  printf '%s [y/N] ' "$1"
-  IFS= read -r answer
-  [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]
+show_status() {
+  printf 'codex_home: %s\n' "$CODEX_HOME"
+  printf 'active_profile: %s\n' "$(active_profile)"
+  show_list
 }
 
-import_profile() {
-  local profile="$1" dir tmp cfg auth
-  require_profile "$profile"
-  ensure_dirs
-  dir="$PROFILES_DIR/$profile"
-  tmp="$(mktemp -d "$CODEX_HOME/.profile-import.XXXXXX")"
-  mkdir -p "$dir"
-  chmod 700 "$dir" "$tmp"
-  cfg="$tmp/config.toml"
-  auth="$tmp/auth.json"
-
-  if [[ "$profile" == "api" ]]; then
-    read_multiline "Third-party config.toml content:" "$cfg"
-  fi
-  read_multiline "$([[ "$profile" == "api" ]] && printf 'Third-party' || printf 'Official') auth.json content:" "$auth"
-
-  validate_profile_files "$profile" "$cfg" "$auth"
-  if [[ "$profile" == "official" && "$(auth_kind "$auth")" == "api_key" ]] && \
-     ! confirm "This looks like API-key auth, not official ChatGPT auth. Save as official anyway?"; then
-    rm -rf "$tmp"
-    die "official auth import cancelled"
-  fi
-
-  cp "$auth" "$(profile_file "$profile" auth.json)"
-  if [[ "$profile" == "api" ]]; then
-    cp "$cfg" "$(profile_file api config.toml)"
-    chmod 600 "$(profile_file api config.toml)"
-  else
-    rm -f "$(profile_file official config.toml)"
-  fi
-  chmod 600 "$(profile_file "$profile" auth.json)"
-  rm -rf "$tmp"
-  info "Imported $profile profile."
-}
-
-ensure_profile() {
-  local profile="$1" cfg auth
-  cfg="$(profile_file "$profile" config.toml)"
-  auth="$(profile_file "$profile" auth.json)"
-  if [[ ! -f "$auth" || ( "$profile" == "api" && ! -f "$cfg" ) ]]; then
-    info "$profile profile is incomplete."
-    import_profile "$profile"
-  fi
-}
-
-ensure_all_profiles() {
-  ensure_profile official
-  ensure_profile api
-}
-
-backup_current() {
+backup_config() {
   local dir
+  [[ -f "$CONFIG_FILE" ]] || return 0
   dir="$(mktemp -d "$BACKUPS_DIR/$(date +%Y%m%d-%H%M%S).XXXXXX")"
-  chmod 700 "$dir"
-  [[ -f "$CONFIG_FILE" ]] && cp "$CONFIG_FILE" "$dir/config.toml"
-  [[ -f "$AUTH_FILE" ]] && cp "$AUTH_FILE" "$dir/auth.json"
-  chmod 600 "$dir"/* 2>/dev/null || true
+  cp "$CONFIG_FILE" "$dir/config.toml"
+  chmod 600 "$dir/config.toml"
   printf '%s\n' "$dir"
 }
 
-apply_profile() {
-  local profile="$1" cfg auth backup
-  require_profile "$profile"
-  ensure_all_profiles
-  cfg="$(profile_file "$profile" config.toml)"
-  auth="$(profile_file "$profile" auth.json)"
-  validate_profile_files "$profile" "$cfg" "$auth"
-  backup="$(backup_current)"
+save_api() {
+  [[ -f "$CONFIG_FILE" ]] || die "current config.toml does not exist"
+  ensure_dirs
+  cp "$CONFIG_FILE" "$API_CONFIG"
+  chmod 600 "$API_CONFIG"
+  info "Saved API config.toml."
+}
 
-  if [[ "$profile" == "api" ]]; then
-    cp "$cfg" "$CONFIG_FILE"
+import_api() {
+  local src="${1:-}"
+  [[ -n "$src" ]] || die "usage: codex-profile-switch import api CONFIG_FILE"
+  [[ -f "$src" ]] || die "config file not found: $src"
+  ensure_dirs
+  cp "$src" "$API_CONFIG"
+  chmod 600 "$API_CONFIG"
+  info "Imported API config.toml."
+}
+
+apply_profile() {
+  local profile="$1" backup=""
+  require_profile "$profile"
+  ensure_dirs
+
+  if [[ "$profile" == api && ! -f "$API_CONFIG" ]]; then
+    die "API config missing; run: codex-profile-switch import api CONFIG_FILE"
+  fi
+
+  backup="$(backup_config)"
+  if [[ "$profile" == api ]]; then
+    cp "$API_CONFIG" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
   else
     rm -f "$CONFIG_FILE"
   fi
-  cp "$auth" "$AUTH_FILE"
-  chmod 600 "$AUTH_FILE"
 
   info "Switched to $profile profile."
-  info "Backup: $backup"
-}
-
-save_profile() {
-  local profile="$1" dir
-  require_profile "$profile"
-  ensure_dirs
-  validate_profile_files "$profile" "$CONFIG_FILE" "$AUTH_FILE"
-
-  if [[ "$profile" == "official" && "$(auth_kind "$AUTH_FILE")" == "api_key" ]] && \
-     ! confirm "Current auth looks like API-key auth. Save it as official anyway?"; then
-    die "save official cancelled"
-  fi
-
-  dir="$PROFILES_DIR/$profile"
-  mkdir -p "$dir"
-  chmod 700 "$dir"
-  cp "$AUTH_FILE" "$(profile_file "$profile" auth.json)"
-  chmod 600 "$(profile_file "$profile" auth.json)"
-
-  if [[ "$profile" == "api" ]]; then
-    cp "$CONFIG_FILE" "$(profile_file api config.toml)"
-    chmod 600 "$(profile_file api config.toml)"
-  else
-    rm -f "$(profile_file official config.toml)"
-  fi
-  info "Saved current configuration as $profile profile."
+  [[ -z "$backup" ]] || info "Backup: $backup"
 }
 
 resume_all() {
   local selector="${1:-}" session_id
   [[ "$#" -le 1 ]] || die "--resume-all accepts --last or one session ID"
-  [[ "$selector" != -* || "$selector" == "--last" ]] || die "unexpected argument for --resume-all: $selector"
-  require_session_list
+  [[ "$selector" != -* || "$selector" == --last ]] || die "unexpected argument: $selector"
 
-  if [[ "$selector" == "--last" ]]; then
+  if [[ "$selector" == --last ]]; then
     session_id="$($SESSION_LIST_SCRIPT --last)"
   elif [[ -n "$selector" ]]; then
     session_id="$($SESSION_LIST_SCRIPT --id "$selector")"
   else
     session_id="$($SESSION_LIST_SCRIPT --select)"
   fi
+
   [[ -n "$session_id" ]] || die "no session was selected"
   exec codex resume "$session_id"
 }
@@ -333,79 +148,48 @@ use_profile() {
       apply_profile "$profile"
       resume_all "$@"
       ;;
-    "")
-      apply_profile "$profile"
-      ;;
-    *)
-      die "unexpected argument for use: $1"
-      ;;
+    "") apply_profile "$profile" ;;
+    *) die "unexpected argument: $1" ;;
   esac
 }
 
-show_list() {
-  ensure_dirs
-  profile_status official
-  profile_status api
-}
-
-show_status() {
-  ensure_dirs
-  printf 'codex_home: %s\n' "$CODEX_HOME"
-  printf 'active_profile: %s\n' "$(detect_active_profile)"
-  printf 'current_auth: %s\n' "$(auth_kind "$AUTH_FILE")"
-  if [[ -f "$CONFIG_FILE" ]]; then
-    inspect_file summary "$CONFIG_FILE"
-  else
-    printf 'config: missing\n'
-  fi
-  profile_status official
-  profile_status api
-}
-
 interactive_main() {
-  local choice
-  [[ -t 0 ]] || die "no command provided and standard input is not interactive"
+  local choice path
   cat <<'MENU'
-Codex profile switcher
-  1) Switch to official ChatGPT login
-  2) Switch to third-party API
-  3) Show status
-  4) List saved profiles
-  5) Save current login as official
-  6) Save current configuration as API
-  7) Import official auth.json
-  8) Import API config.toml and auth.json
-  9) List all local sessions across providers
+Codex config switcher
+  1) Use official login
+  2) Use API config
+  3) Status
+  4) Save current config as API
+  5) Import API config
+  6) List sessions
   0) Exit
 MENU
-  printf 'Choose an action [0-9]: '
+  printf 'Choose [0-6]: '
   IFS= read -r choice
   case "$choice" in
     1) apply_profile official ;;
     2) apply_profile api ;;
     3) show_status ;;
-    4) show_list ;;
-    5) save_profile official ;;
-    6) save_profile api ;;
-    7) import_profile official ;;
-    8) import_profile api ;;
-    9) require_session_list; "$SESSION_LIST_SCRIPT" ;;
-    0) info "Cancelled." ;;
-    *) die "invalid choice: ${choice:-empty}" ;;
+    4) save_api ;;
+    5) printf 'config.toml path: '; IFS= read -r path; import_api "$path" ;;
+    6) require_session_list; "$SESSION_LIST_SCRIPT" ;;
+    0) : ;;
+    *) die "invalid choice" ;;
   esac
 }
 
 main() {
-  require_python
+  ensure_dirs
   case "${1:-}" in
     status) show_status ;;
     list) show_list ;;
     sessions) require_session_list; "$SESSION_LIST_SCRIPT" ;;
-    save) save_profile "${2:-}" ;;
-    import) import_profile "${2:-}" ;;
+    save) [[ "${2:-}" == api ]] || die "only API config.toml is saved"; save_api ;;
+    import) [[ "${2:-}" == api ]] || die "only API config.toml is imported"; import_api "${3:-}" ;;
     use) shift; use_profile "$@" ;;
     -h|--help|help) usage ;;
-    "") interactive_main ;;
+    "") [[ -t 0 ]] || die "no command provided"; interactive_main ;;
     *) usage >&2; exit 1 ;;
   esac
 }
